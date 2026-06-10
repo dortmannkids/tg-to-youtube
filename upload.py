@@ -88,7 +88,11 @@ async def main():
     session_str = os.environ["TELEGRAM_SESSION"]
     group_str = os.environ["TELEGRAM_GROUP"]
     group = int(group_str) if group_str.lstrip("-").isdigit() else group_str
-    topic_id = int(os.environ["TELEGRAM_TOPIC_ID"])
+    # Telegram Web sometimes encodes topic IDs > 2^32; convert to signed 32-bit
+    _raw = int(os.environ["TELEGRAM_TOPIC_ID"])
+    topic_id = _raw % (2**32)
+    if topic_id > 2**31 - 1:
+        topic_id -= 2**32
 
     async with TelegramClient(StringSession(session_str), api_id, api_hash) as client:
         # Must load dialogs first so Telethon knows the entity type (chat vs channel)

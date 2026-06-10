@@ -54,10 +54,18 @@ def upload_video(youtube, filepath: Path, title: str) -> str:
     media = MediaFileUpload(str(filepath), chunksize=10 * 1024 * 1024, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None
+    retries = 0
     while response is None:
-        status, response = request.next_chunk()
-        if status:
-            print(f"  {int(status.progress() * 100)}%", flush=True)
+        try:
+            status, response = request.next_chunk()
+            if status:
+                print(f"  {int(status.progress() * 100)}%", flush=True)
+            retries = 0
+        except Exception as e:
+            retries += 1
+            if retries > 5:
+                raise
+            print(f"  Upload error (retry {retries}/5): {e}", flush=True)
     return response["id"]
 
 

@@ -91,11 +91,9 @@ async def main():
     topic_id = int(os.environ["TELEGRAM_TOPIC_ID"])
 
     async with TelegramClient(StringSession(session_str), api_id, api_hash) as client:
-        try:
-            entity = await client.get_entity(group)
-        except (ValueError, KeyError):
-            await client.get_dialogs()
-            entity = await client.get_entity(group)
+        # Must load dialogs first so Telethon knows the entity type (chat vs channel)
+        await client.get_dialogs()
+        entity = await client.get_entity(group)
 
         video_messages = []
         async for msg in client.iter_messages(

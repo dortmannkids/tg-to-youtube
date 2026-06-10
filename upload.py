@@ -122,7 +122,7 @@ async def main():
                 break
 
             n = state["total_uploaded"] + 1
-            title = f"DortmannKids #{n}"
+            title = f"DortmannKids Berlin #{n}"
 
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 tmp_path = Path(tmp.name)

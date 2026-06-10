@@ -86,11 +86,16 @@ async def main():
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
     session_str = os.environ["TELEGRAM_SESSION"]
-    group = os.environ["TELEGRAM_GROUP"]
+    group_str = os.environ["TELEGRAM_GROUP"]
+    group = int(group_str) if group_str.lstrip("-").isdigit() else group_str
     topic_id = int(os.environ["TELEGRAM_TOPIC_ID"])
 
     async with TelegramClient(StringSession(session_str), api_id, api_hash) as client:
-        entity = await client.get_entity(group)
+        try:
+            entity = await client.get_entity(group)
+        except (ValueError, KeyError):
+            await client.get_dialogs()
+            entity = await client.get_entity(group)
 
         video_messages = []
         async for msg in client.iter_messages(

@@ -19,7 +19,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install chromium --with-deps
 
       - name: Run upload script
         env:
@@ -31,6 +33,7 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          TIKTOK_SESSIONID: ${{ secrets.TIKTOK_SESSIONID }}
         run: python upload.py
 
       - name: Save state

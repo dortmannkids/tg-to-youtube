@@ -38,6 +38,18 @@ def get_youtube_service():
     return build("youtube", "v3", credentials=creds)
 
 
+def upload_tiktok(filepath: Path, description: str, sessionid: str) -> bool:
+    from tiktok_uploader.upload import upload_video as tiktok_upload_video
+    failed = tiktok_upload_video(
+        str(filepath),
+        description=description,
+        sessionid=sessionid,
+        headless=True,
+        browser="chromium",
+    )
+    return not failed
+
+
 def upload_video(youtube, filepath: Path, title: str) -> str:
     body = {
         "snippet": {
@@ -90,6 +102,7 @@ async def main():
         return
 
     youtube = get_youtube_service()
+    tiktok_sessionid = os.environ.get("TIKTOK_SESSIONID", "")
 
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
@@ -144,6 +157,14 @@ async def main():
                 print(f"Uploading '{title}'...", flush=True)
                 video_id = upload_video(youtube, tmp_path, title)
                 print(f"Done: https://youtube.com/shorts/{video_id}")
+
+                if tiktok_sessionid:
+                    tiktok_desc = f"{title} #DortmannKids #Shorts"
+                    try:
+                        ok = upload_tiktok(tmp_path, tiktok_desc, tiktok_sessionid)
+                        print(f"TikTok: {'uploaded' if ok else 'failed'}")
+                    except Exception as e:
+                        print(f"TikTok error (non-fatal): {e}")
 
                 state["last_message_id"] = msg.id
                 state["total_uploaded"] += 1

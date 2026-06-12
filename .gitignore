@@ -1,0 +1,5 @@
+.env
+*.session
+__pycache__/
+*.pyc
+tiktok_icon.png

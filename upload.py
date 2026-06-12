@@ -163,8 +163,11 @@ async def main():
                     try:
                         ok = upload_tiktok(tmp_path, tiktok_desc, tiktok_sessionid)
                         print(f"TikTok: {'uploaded' if ok else 'failed'}")
+                        if not ok:
+                            await client.send_message("@alexanderdortmann", "TikTok session expired. Please log in to tiktok.com in Chrome and tell me to refresh the cookie.")
                     except Exception as e:
                         print(f"TikTok error (non-fatal): {e}")
+                        await client.send_message("@alexanderdortmann", f"TikTok upload error: {e}\nPlease log in to tiktok.com in Chrome and tell me to refresh the cookie.")
 
                 state["last_message_id"] = msg.id
                 state["total_uploaded"] += 1

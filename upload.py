@@ -161,7 +161,7 @@ async def main():
                 if tiktok_sessionid:
                     tiktok_desc = f"{title} #DortmannKids #Shorts"
                     try:
-                        ok = upload_tiktok(tmp_path, tiktok_desc, tiktok_sessionid)
+                        ok = await asyncio.to_thread(upload_tiktok, tmp_path, tiktok_desc, tiktok_sessionid)
                         print(f"TikTok: {'uploaded' if ok else 'failed'}")
                         if not ok:
                             await client.send_message("@alexanderdortmann", "TikTok session expired. Please log in to tiktok.com in Chrome and tell me to refresh the cookie.")

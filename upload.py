@@ -18,8 +18,18 @@ MAX_DAILY_UPLOADS = 5
 
 def load_state() -> dict:
     if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
-    return {"last_message_id": 0, "total_uploaded": 0, "uploads_today": 0, "last_upload_date": ""}
+        s = json.loads(STATE_FILE.read_text())
+        # migrate: seed last_tiktok_message_id from last_message_id
+        if "last_tiktok_message_id" not in s:
+            s["last_tiktok_message_id"] = s.get("last_message_id", 0)
+        return s
+    return {
+        "last_message_id": 0,
+        "last_tiktok_message_id": 0,
+        "total_uploaded": 0,
+        "uploads_today": 0,
+        "last_upload_date": "",
+    }
 
 
 def save_state(state: dict):
@@ -50,7 +60,7 @@ def upload_tiktok(filepath: Path, description: str, sessionid: str) -> bool:
     return not failed
 
 
-def upload_video(youtube, filepath: Path, title: str) -> str:
+def upload_youtube(youtube, filepath: Path, title: str) -> str:
     body = {
         "snippet": {
             "title": title,
@@ -89,6 +99,101 @@ def is_video(msg) -> bool:
     return False
 
 
+async def fetch_videos(client, entity, topic_id: int, min_id: int) -> list:
+    msgs = []
+    async for msg in client.iter_messages(entity, reply_to=topic_id, min_id=min_id):
+        if is_video(msg):
+            msgs.append(msg)
+    msgs.sort(key=lambda m: m.id)
+    return msgs
+
+
+async def run_tiktok(client, entity, topic_id: int, state: dict, tiktok_sessionid: str):
+    msgs = await fetch_videos(client, entity, topic_id, state["last_tiktok_message_id"])
+    if not msgs:
+        print("TikTok: no new videos.")
+        return
+
+    print(f"TikTok: {len(msgs)} new video(s).")
+    for msg in msgs:
+        caption = (msg.message or "").strip()
+        n = state["total_uploaded"] + 1
+        title = caption if caption else f"DortmannKids Berlin #{n}"
+        tiktok_desc = f"{title} #DortmannKids #Shorts"
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            size_mb = (msg.document.size if msg.document else 0) / 1024 / 1024
+            print(f"TikTok: downloading message {msg.id} ({size_mb:.0f} MB)...", flush=True)
+            await client.download_media(msg, file=str(tmp_path))
+
+            ok = await asyncio.to_thread(upload_tiktok, tmp_path, tiktok_desc, tiktok_sessionid)
+            print(f"TikTok: {'uploaded' if ok else 'failed'}")
+            if not ok:
+                await client.send_message(
+                    "@alexanderdortmann",
+                    "TikTok session expired. Please log in to tiktok.com in Chrome and tell me to refresh the cookie.",
+                )
+
+            state["last_tiktok_message_id"] = msg.id
+            save_state(state)
+
+        except Exception as e:
+            print(f"TikTok error on message {msg.id} (non-fatal): {e}")
+            await client.send_message(
+                "@alexanderdortmann",
+                f"TikTok upload error: {e}\nPlease log in to tiktok.com in Chrome and tell me to refresh the cookie.",
+            )
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+
+async def run_youtube(client, entity, topic_id: int, state: dict, youtube):
+    if state["uploads_today"] >= MAX_DAILY_UPLOADS:
+        print(f"YouTube: daily limit reached ({MAX_DAILY_UPLOADS}/day). Skipping.")
+        return
+
+    msgs = await fetch_videos(client, entity, topic_id, state["last_message_id"])
+    if not msgs:
+        print("YouTube: no new videos.")
+        return
+
+    print(f"YouTube: {len(msgs)} new video(s).")
+    for msg in msgs:
+        if state["uploads_today"] >= MAX_DAILY_UPLOADS:
+            print("YouTube: daily limit reached mid-run. Will continue tomorrow.")
+            break
+
+        n = state["total_uploaded"] + 1
+        caption = (msg.message or "").strip()
+        title = caption if caption else f"DortmannKids Berlin #{n}"
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            size_mb = (msg.document.size if msg.document else 0) / 1024 / 1024
+            print(f"YouTube: downloading message {msg.id} ({size_mb:.0f} MB)...", flush=True)
+            await client.download_media(msg, file=str(tmp_path))
+
+            print(f"YouTube: uploading '{title}'...", flush=True)
+            video_id = upload_youtube(youtube, tmp_path, title)
+            print(f"YouTube: done https://youtube.com/shorts/{video_id}")
+
+            state["last_message_id"] = msg.id
+            state["total_uploaded"] += 1
+            state["uploads_today"] += 1
+            save_state(state)
+
+        except Exception as e:
+            print(f"YouTube error on message {msg.id}: {e}")
+            break
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+
 async def main():
     state = load_state()
     today = date.today().isoformat()
@@ -96,90 +201,29 @@ async def main():
     if state.get("last_upload_date") != today:
         state["uploads_today"] = 0
         state["last_upload_date"] = today
-
-    if state["uploads_today"] >= MAX_DAILY_UPLOADS:
-        print(f"Daily limit reached ({MAX_DAILY_UPLOADS}/day). Skipping.")
-        return
-
-    youtube = get_youtube_service()
-    tiktok_sessionid = os.environ.get("TIKTOK_SESSIONID", "")
+        save_state(state)
 
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
     session_str = os.environ["TELEGRAM_SESSION"]
     group_str = os.environ["TELEGRAM_GROUP"]
     group = int(group_str) if group_str.lstrip("-").isdigit() else group_str
-    # Telegram Web sometimes encodes topic IDs > 2^32; convert to signed 32-bit
     _raw = int(os.environ["TELEGRAM_TOPIC_ID"])
     topic_id = _raw % (2**32)
     if topic_id > 2**31 - 1:
         topic_id -= 2**32
 
+    tiktok_sessionid = os.environ.get("TIKTOK_SESSIONID", "")
+    youtube = get_youtube_service()
+
     async with TelegramClient(StringSession(session_str), api_id, api_hash) as client:
-        # Must load dialogs first so Telethon knows the entity type (chat vs channel)
         await client.get_dialogs()
         entity = await client.get_entity(group)
 
-        video_messages = []
-        async for msg in client.iter_messages(
-            entity,
-            reply_to=topic_id,
-            min_id=state["last_message_id"],
-        ):
-            if is_video(msg):
-                video_messages.append(msg)
+        await run_youtube(client, entity, topic_id, state, youtube)
 
-        video_messages.sort(key=lambda m: m.id)
-
-        if not video_messages:
-            print("No new videos.")
-            return
-
-        print(f"Found {len(video_messages)} new video(s).")
-
-        for msg in video_messages:
-            if state["uploads_today"] >= MAX_DAILY_UPLOADS:
-                print("Daily limit reached mid-run. Will continue tomorrow.")
-                break
-
-            n = state["total_uploaded"] + 1
-            caption = (msg.message or "").strip()
-            title = caption if caption else f"DortmannKids Berlin #{n}"
-
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                tmp_path = Path(tmp.name)
-
-            try:
-                size_mb = (msg.document.size if msg.document else 0) / 1024 / 1024
-                print(f"Downloading message {msg.id} ({size_mb:.0f} MB)...", flush=True)
-                await client.download_media(msg, file=str(tmp_path))
-
-                print(f"Uploading '{title}'...", flush=True)
-                video_id = upload_video(youtube, tmp_path, title)
-                print(f"Done: https://youtube.com/shorts/{video_id}")
-
-                if tiktok_sessionid:
-                    tiktok_desc = f"{title} #DortmannKids #Shorts"
-                    try:
-                        ok = await asyncio.to_thread(upload_tiktok, tmp_path, tiktok_desc, tiktok_sessionid)
-                        print(f"TikTok: {'uploaded' if ok else 'failed'}")
-                        if not ok:
-                            await client.send_message("@alexanderdortmann", "TikTok session expired. Please log in to tiktok.com in Chrome and tell me to refresh the cookie.")
-                    except Exception as e:
-                        print(f"TikTok error (non-fatal): {e}")
-                        await client.send_message("@alexanderdortmann", f"TikTok upload error: {e}\nPlease log in to tiktok.com in Chrome and tell me to refresh the cookie.")
-
-                state["last_message_id"] = msg.id
-                state["total_uploaded"] += 1
-                state["uploads_today"] += 1
-                save_state(state)
-
-            except Exception as e:
-                print(f"Error on message {msg.id}: {e}")
-                # don't advance last_message_id so we retry next run
-                break
-            finally:
-                tmp_path.unlink(missing_ok=True)
+        if tiktok_sessionid:
+            await run_tiktok(client, entity, topic_id, state, tiktok_sessionid)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -48,16 +49,24 @@ def get_youtube_service():
     return build("youtube", "v3", credentials=creds)
 
 
-def upload_tiktok(filepath: Path, description: str, sessionid: str) -> bool:
-    from tiktok_uploader.upload import upload_video as tiktok_upload_video
-    failed = tiktok_upload_video(
-        str(filepath),
-        description=description,
-        sessionid=sessionid,
-        headless=True,
-        browser="chromium",
+async def upload_tiktok(filepath: Path, description: str, sessionid: str) -> bool:
+    # Run in a subprocess to avoid Playwright Sync API / asyncio loop conflict
+    script = (
+        "from tiktok_uploader.upload import upload_video; import sys; "
+        "failed = upload_video(sys.argv[1], description=sys.argv[2], sessionid=sys.argv[3], headless=True, browser='chromium'); "
+        "sys.exit(0 if not failed else 1)"
     )
-    return not failed
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", script, str(filepath), description, sessionid,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if stdout:
+        print(stdout.decode().strip(), flush=True)
+    if stderr:
+        print(stderr.decode().strip(), flush=True)
+    return proc.returncode == 0
 
 
 def upload_youtube(youtube, filepath: Path, title: str) -> str:
@@ -129,7 +138,7 @@ async def run_tiktok(client, entity, topic_id: int, state: dict, tiktok_sessioni
             print(f"TikTok: downloading message {msg.id} ({size_mb:.0f} MB)...", flush=True)
             await client.download_media(msg, file=str(tmp_path))
 
-            ok = await asyncio.to_thread(upload_tiktok, tmp_path, tiktok_desc, tiktok_sessionid)
+            ok = await upload_tiktok(tmp_path, tiktok_desc, tiktok_sessionid)
             print(f"TikTok: {'uploaded' if ok else 'failed'}")
             if not ok:
                 await client.send_message(

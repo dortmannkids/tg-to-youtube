@@ -3,6 +3,7 @@ Standalone TikTok upload via Playwright.
 Called as subprocess: python3 tiktok_upload_pw.py <filepath> <description> <sessionid>
 Exit 0 = success, 1 = failure.
 """
+import json
 import sys
 import time
 from pathlib import Path
@@ -78,9 +79,12 @@ def upload(filepath: str, description: str, sessionid: str) -> bool:
             caption_el = page.locator("div[contenteditable='true']").first
             caption_el.click(force=True)
             time.sleep(0.5)
-            # Clear and type
-            caption_el.evaluate("el => el.innerText = ''")
-            caption_el.type(description, delay=30)
+            # Set text via JS to support Cyrillic and any Unicode
+            caption_el.evaluate(
+                f"el => {{ el.innerText = {json.dumps(description)}; "
+                f"el.dispatchEvent(new Event('input', {{bubbles: true}})); "
+                f"el.dispatchEvent(new Event('change', {{bubbles: true}})); }}"
+            )
             time.sleep(1)
         except Exception as e:
             print(f"WARNING: Could not set description: {e}")

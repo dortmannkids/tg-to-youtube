@@ -1,12 +1,15 @@
 """
 Run this script ONCE on your local machine to get a YouTube refresh token.
-You'll need client_id and client_secret from Google Cloud Console.
-Save the printed values as GitHub secrets.
+Reads CLIENT_ID and CLIENT_SECRET from .env automatically.
 """
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-CLIENT_ID = input("YOUTUBE_CLIENT_ID: ")
-CLIENT_SECRET = input("YOUTUBE_CLIENT_SECRET: ")
+load_dotenv(Path(__file__).parent / ".env")
+CLIENT_ID = os.environ["YOUTUBE_CLIENT_ID"]
+CLIENT_SECRET = os.environ["YOUTUBE_CLIENT_SECRET"]
 
 client_config = {
     "installed": {
@@ -20,7 +23,7 @@ client_config = {
 
 flow = InstalledAppFlow.from_client_config(
     client_config,
-    scopes=["https://www.googleapis.com/auth/youtube.upload"],
+    scopes=["https://www.googleapis.com/auth/youtube"],
 )
 creds = flow.run_local_server(port=0)
 

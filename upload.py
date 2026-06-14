@@ -51,10 +51,12 @@ def get_youtube_service():
 
 
 async def upload_tiktok(filepath: Path, description: str, sessionid: str) -> bool:
-    # Run in a subprocess to avoid Playwright Sync API / asyncio loop conflict
+    # Run in a subprocess to avoid Playwright Sync API / asyncio loop conflict.
+    # Pass sessionid via cookies_list with explicit domain so Playwright accepts it.
     script = (
-        "from tiktok_uploader.upload import upload_video; import sys; "
-        "failed = upload_video(sys.argv[1], description=sys.argv[2], sessionid=sys.argv[3], headless=True, browser='chromium'); "
+        "from tiktok_uploader.upload import upload_video; import sys, json; "
+        "cookies = [{'name': 'sessionid', 'value': sys.argv[3], 'domain': '.tiktok.com', 'path': '/'}]; "
+        "failed = upload_video(sys.argv[1], description=sys.argv[2], cookies_list=cookies, headless=True, browser='chromium'); "
         "sys.exit(0 if not failed else 1)"
     )
     proc = await asyncio.create_subprocess_exec(

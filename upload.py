@@ -15,6 +15,7 @@ from googleapiclient.http import MediaFileUpload
 
 STATE_FILE = Path("state.json")
 MAX_DAILY_UPLOADS = 5
+MAX_TIKTOK_PER_RUN = 10
 
 
 def load_state() -> dict:
@@ -123,8 +124,8 @@ async def run_tiktok(client, entity, topic_id: int, state: dict, tiktok_sessioni
         print("TikTok: no new videos.")
         return
 
-    print(f"TikTok: {len(msgs)} new video(s).")
-    for msg in msgs:
+    print(f"TikTok: {len(msgs)} new video(s), processing up to {MAX_TIKTOK_PER_RUN} per run.")
+    for msg in msgs[:MAX_TIKTOK_PER_RUN]:
         caption = (msg.message or "").strip()
         n = state["total_uploaded"] + 1
         title = caption if caption else f"DortmannKids Berlin #{n}"

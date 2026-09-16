@@ -15,19 +15,13 @@ from googleapiclient.http import MediaFileUpload
 
 STATE_FILE = Path("state.json")
 MAX_DAILY_UPLOADS = 5
-MAX_TIKTOK_PER_RUN = 10
 
 
 def load_state() -> dict:
     if STATE_FILE.exists():
-        s = json.loads(STATE_FILE.read_text())
-        # migrate: seed last_tiktok_message_id from last_message_id
-        if "last_tiktok_message_id" not in s:
-            s["last_tiktok_message_id"] = s.get("last_message_id", 0)
-        return s
+        return json.loads(STATE_FILE.read_text())
     return {
         "last_message_id": 0,
-        "last_tiktok_message_id": 0,
         "total_uploaded": 0,
         "uploads_today": 0,
         "last_upload_date": "",
@@ -48,28 +42,6 @@ def get_youtube_service():
     )
     creds.refresh(Request())
     return build("youtube", "v3", credentials=creds)
-
-
-async def upload_tiktok(filepath: Path, description: str, sessionid: str) -> bool:
-    # Run in a subprocess to avoid Playwright Sync API / asyncio loop conflict.
-    # Pass sessionid via cookies_list with explicit domain so Playwright accepts it.
-    script = (
-        "from tiktok_uploader.upload import upload_video; import sys, json; "
-        "cookies = [{'name': 'sessionid', 'value': sys.argv[3], 'domain': '.tiktok.com', 'path': '/'}]; "
-        "failed = upload_video(sys.argv[1], description=sys.argv[2], cookies_list=cookies, headless=True, browser='chromium'); "
-        "sys.exit(0 if not failed else 1)"
-    )
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", script, str(filepath), description, sessionid,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if stdout:
-        print(stdout.decode().strip(), flush=True)
-    if stderr:
-        print(stderr.decode().strip(), flush=True)
-    return proc.returncode == 0
 
 
 def upload_youtube(youtube, filepath: Path, title: str) -> str:
@@ -118,48 +90,6 @@ async def fetch_videos(client, entity, topic_id: int, min_id: int) -> list:
             msgs.append(msg)
     msgs.sort(key=lambda m: m.id)
     return msgs
-
-
-async def run_tiktok(client, entity, topic_id: int, state: dict, tiktok_sessionid: str):
-    msgs = await fetch_videos(client, entity, topic_id, state["last_tiktok_message_id"])
-    if not msgs:
-        print("TikTok: no new videos.")
-        return
-
-    print(f"TikTok: {len(msgs)} new video(s), processing up to {MAX_TIKTOK_PER_RUN} per run.")
-    for msg in msgs[:MAX_TIKTOK_PER_RUN]:
-        caption = (msg.message or "").strip()
-        n = state["total_uploaded"] + 1
-        title = caption if caption else f"DortmannKids Berlin #{n}"
-        tiktok_desc = f"{title} #DortmannKids #Shorts"
-
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-
-        try:
-            size_mb = (msg.document.size if msg.document else 0) / 1024 / 1024
-            print(f"TikTok: downloading message {msg.id} ({size_mb:.0f} MB)...", flush=True)
-            await client.download_media(msg, file=str(tmp_path))
-
-            ok = await upload_tiktok(tmp_path, tiktok_desc, tiktok_sessionid)
-            print(f"TikTok: {'uploaded' if ok else 'failed'}")
-            if not ok:
-                await client.send_message(
-                    "@alexanderdortmann",
-                    "TikTok session expired. Please log in to tiktok.com in Chrome and tell me to refresh the cookie.",
-                )
-
-            state["last_tiktok_message_id"] = msg.id
-            save_state(state)
-
-        except Exception as e:
-            print(f"TikTok error on message {msg.id} (non-fatal): {e}")
-            await client.send_message(
-                "@alexanderdortmann",
-                f"TikTok upload error: {e}\nPlease log in to tiktok.com in Chrome and tell me to refresh the cookie.",
-            )
-        finally:
-            tmp_path.unlink(missing_ok=True)
 
 
 async def run_youtube(client, entity, topic_id: int, state: dict, youtube):
@@ -225,7 +155,6 @@ async def main():
     if topic_id > 2**31 - 1:
         topic_id -= 2**32
 
-    tiktok_sessionid = os.environ.get("TIKTOK_SESSIONID", "")
     youtube = get_youtube_service()
 
     async with TelegramClient(StringSession(session_str), api_id, api_hash) as client:
@@ -233,9 +162,6 @@ async def main():
         entity = await client.get_entity(group)
 
         await run_youtube(client, entity, topic_id, state, youtube)
-
-        if tiktok_sessionid:
-            await run_tiktok(client, entity, topic_id, state, tiktok_sessionid)
 
 
 if __name__ == "__main__":
